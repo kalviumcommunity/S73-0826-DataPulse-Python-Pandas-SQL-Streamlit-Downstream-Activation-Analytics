@@ -79,10 +79,65 @@ def run_phase_1(config: Dict[str, Any]) -> None:
         )
 
 
+def run_phase_2(config: Dict[str, Any]) -> None:
+    """
+    Phase 2: Cleaning, Normalisation & Multi-Source Joining.
+
+    Steps
+    -----
+    1. Ingest raw datasets (re-uses Phase 1 output)
+    2. Clean all datasets (dedup, normalise, impute, outlier filter)
+    3. Execute multi-stage joins (union, aggregate, campaign+signups, +events)
+    """
+    from src.ingestion import ingest_all_datasets
+    from src.cleaning import clean_all_datasets
+    from src.joining import join_all_datasets
+
+    logger.info("=" * 60)
+    logger.info("PHASE 2: Cleaning, Normalisation & Multi-Source Joining")
+    logger.info("=" * 60)
+
+    # Step 1: Ingest
+    logger.info("\n>> Step 1/3: Ingesting raw datasets...")
+    t0 = time.time()
+    dataframes, _ = ingest_all_datasets(config)
+    logger.info("  Ingestion completed in %.2fs", time.time() - t0)
+
+    # Step 2: Clean
+    logger.info("\n>> Step 2/3: Cleaning & normalising datasets...")
+    t1 = time.time()
+    cleaned = clean_all_datasets(dataframes)
+    clean_time = time.time() - t1
+    logger.info("  Cleaning completed in %.2fs", clean_time)
+
+    # Step 3: Join
+    logger.info("\n>> Step 3/3: Executing multi-stage joins...")
+    t2 = time.time()
+    master_table, audits = join_all_datasets(cleaned)
+    join_time = time.time() - t2
+    logger.info("  Joining completed in %.2fs", join_time)
+
+    # Summary
+    logger.info("\n" + "=" * 60)
+    logger.info("PHASE 2 COMPLETE -- Summary")
+    logger.info("=" * 60)
+    logger.info("  Cleaned datasets:")
+    for key, df in cleaned.items():
+        raw_count = len(dataframes[key])
+        logger.info(
+            "    %-15s : %6d -> %6d rows (removed %d)",
+            key, raw_count, len(df), raw_count - len(df),
+        )
+    logger.info("  Master table    : %d rows x %d columns", len(master_table), len(master_table.columns))
+    logger.info("  Join audits     : %d joins executed, %d total warnings",
+                len(audits), sum(len(a.validate()) for a in audits))
+    logger.info("  Total time      : %.2fs", clean_time + join_time)
+
+
 def main() -> None:
     """CLI entry point with phase selection."""
     parser = argparse.ArgumentParser(
-        description="Downstream Activation Engine — Pipeline Runner",
+        description="Downstream Activation Engine -- Pipeline Runner",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -90,7 +145,7 @@ def main() -> None:
         type=int,
         choices=[1, 2, 3],
         default=None,
-        help="Run a specific phase (1=Data Gen/Ingestion, 2=Clean/Join/Features, 3=SQL/Dashboard). "
+        help="Run a specific phase (1=Data Gen/Ingestion, 2=Clean/Join, 3=SQL/Dashboard). "
              "Default: run all available phases.",
     )
     parser.add_argument(
@@ -104,7 +159,7 @@ def main() -> None:
     config = load_config(overrides={"random_seed": args.seed})
     ensure_directories(config)
 
-    logger.info("Downstream Activation Engine — Pipeline Run")
+    logger.info("Downstream Activation Engine -- Pipeline Run")
     logger.info("  Phase   : %s", args.phase or "ALL")
     logger.info("  Seed    : %d", args.seed)
     logger.info("  Raw dir : %s", config["data_raw_dir"])
@@ -113,11 +168,14 @@ def main() -> None:
         if args.phase is None or args.phase == 1:
             run_phase_1(config)
 
-        # Phases 2 and 3 will be added in subsequent implementations
-        if args.phase and args.phase > 1:
+        if args.phase is None or args.phase == 2:
+            run_phase_2(config)
+
+        # Phase 3 will be added in subsequent implementation
+        if args.phase and args.phase > 2:
             logger.warning("Phase %d is not yet implemented.", args.phase)
 
-        logger.info("\n🎉 Pipeline run completed successfully!")
+        logger.info("\nPipeline run completed successfully!")
 
     except Exception as exc:
         logger.exception("Pipeline failed: %s", exc)
