@@ -134,6 +134,80 @@ def run_phase_2(config: Dict[str, Any]) -> None:
     logger.info("  Total time      : %.2fs", clean_time + join_time)
 
 
+def run_phase_3(config: Dict[str, Any]) -> None:
+    """
+    Phase 3: Feature Engineering & SQL Layer.
+
+    Steps
+    -----
+    1. Re-ingest + clean + join (reuses Phase 2 logic)
+    2. Compute user-level activation features
+    3. Aggregate campaign-level KPIs (CTR, CPAU, Vanity Ratio)
+    4. Push to SQLite and create analytical views
+    """
+    from src.ingestion import ingest_all_datasets
+    from src.cleaning import clean_all_datasets
+    from src.joining import join_all_datasets
+    from src.feature_engineering import engineer_features
+    from src.sql_layer import build_sql_layer, query_view
+
+    logger.info("=" * 60)
+    logger.info("PHASE 3: Feature Engineering & SQL Layer")
+    logger.info("=" * 60)
+
+    # Steps 1-3: Rebuild master table
+    logger.info("\n>> Step 1/4: Ingesting raw datasets...")
+    t0 = time.time()
+    dataframes, _ = ingest_all_datasets(config)
+    logger.info("  Ingestion completed in %.2fs", time.time() - t0)
+
+    logger.info("\n>> Step 2/4: Cleaning & joining...")
+    t1 = time.time()
+    cleaned = clean_all_datasets(dataframes)
+    master, _ = join_all_datasets(cleaned)
+    logger.info("  Clean + join completed in %.2fs", time.time() - t1)
+
+    # Step 3: Feature engineering
+    logger.info("\n>> Step 3/4: Computing activation features & KPIs...")
+    t2 = time.time()
+    campaigns, users = engineer_features(master, config=config)
+    fe_time = time.time() - t2
+    logger.info("  Feature engineering completed in %.2fs", fe_time)
+
+    # Step 4: SQL Layer
+    logger.info("\n>> Step 4/4: Building SQL layer & analytical views...")
+    t3 = time.time()
+    engine, views = build_sql_layer(campaigns, users, config=config)
+    sql_time = time.time() - t3
+    logger.info("  SQL layer completed in %.2fs", sql_time)
+
+    # Summary
+    logger.info("\n" + "=" * 60)
+    logger.info("PHASE 3 COMPLETE -- Summary")
+    logger.info("=" * 60)
+    logger.info("  Users processed    : %d", len(users))
+    logger.info("  Activated (7-day)  : %d (%.1f%%)",
+                int(users["is_activated_7d"].sum()),
+                users["is_activated_7d"].mean() * 100)
+    logger.info("  Campaigns scored   : %d", len(campaigns))
+
+    vanity_count = int(campaigns["is_vanity_trap"].sum())
+    logger.info("  Vanity Traps       : %d", vanity_count)
+    logger.info("  SQL views created  : %d (%s)", len(views), ", ".join(views))
+    logger.info("  Total time         : %.2fs", fe_time + sql_time)
+
+    # Print campaign leaderboard
+    logger.info("\n  Campaign Leaderboard:")
+    for _, row in campaigns.iterrows():
+        flag = " ** VANITY TRAP **" if row["is_vanity_trap"] else ""
+        logger.info(
+            "    #%-2d %-12s | CTR: %5.2f%% | Activation: %5.1f%% | CPAU: $%8.2f | %s%s",
+            row["cpau_rank"], row["campaign_id"], row["ctr_pct"],
+            row["activation_rate_pct"], row["cpau_usd"],
+            row["performance_category"], flag,
+        )
+
+
 def main() -> None:
     """CLI entry point with phase selection."""
     parser = argparse.ArgumentParser(
@@ -145,7 +219,7 @@ def main() -> None:
         type=int,
         choices=[1, 2, 3],
         default=None,
-        help="Run a specific phase (1=Data Gen/Ingestion, 2=Clean/Join, 3=SQL/Dashboard). "
+        help="Run a specific phase (1=Data Gen/Ingestion, 2=Clean/Join, 3=Features/SQL). "
              "Default: run all available phases.",
     )
     parser.add_argument(
@@ -171,9 +245,8 @@ def main() -> None:
         if args.phase is None or args.phase == 2:
             run_phase_2(config)
 
-        # Phase 3 will be added in subsequent implementation
-        if args.phase and args.phase > 2:
-            logger.warning("Phase %d is not yet implemented.", args.phase)
+        if args.phase is None or args.phase == 3:
+            run_phase_3(config)
 
         logger.info("\nPipeline run completed successfully!")
 
