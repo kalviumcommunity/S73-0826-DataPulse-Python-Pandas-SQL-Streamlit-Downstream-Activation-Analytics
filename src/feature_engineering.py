@@ -281,16 +281,19 @@ def _classify_campaign(
     ----------
     - **High Value**: activation_rate >= target AND cpau <= target
     - **Scaling**: activation_rate >= target but cpau > target (good conversion, high cost)
-    - **Vanity Trap**: vanity_ratio > threshold (high CTR, low activation)
+    - **Vanity Trap**: high vanity ratio OR (high CTR + low activation)
     - **Under-Performer**: everything else
     """
+    median_ctr = df["ctr_pct"].median()
+
     conditions = [
         # High Value: good activation AND cost-efficient
         (df["activation_rate_pct"] >= activation_target) & (df["cpau_usd"] <= cpau_target),
         # Scaling: good activation but expensive
         (df["activation_rate_pct"] >= activation_target) & (df["cpau_usd"] > cpau_target),
-        # Vanity Trap: high vanity ratio
-        (df["vanity_ratio_index"] > vanity_threshold),
+        # Vanity Trap: high vanity ratio OR (above-median CTR + below-target activation)
+        (df["vanity_ratio_index"] > vanity_threshold)
+        | ((df["ctr_pct"] > median_ctr) & (df["activation_rate_pct"] < activation_target)),
     ]
     choices = ["High Value", "Scaling", "Vanity Trap"]
 
