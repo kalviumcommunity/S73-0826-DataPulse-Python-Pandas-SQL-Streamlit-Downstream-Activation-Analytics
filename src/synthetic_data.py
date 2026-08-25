@@ -324,9 +324,17 @@ def generate_user_events(
     Generate post-signup event streams. The probability that a user produces
     an *activation event* within 7 days is governed by their campaign's
     ``activation_rate``.
+
+    Non-activated users will ONLY receive non-activation events within the
+    7-day window (page_view, support_ticket, settings_changed, invite_sent),
+    ensuring archetype fidelity (Vanity Traps < 5%, Hidden Gems > 40%).
     """
     profile_map = {p["campaign_id"]: p for p in profiles}
     rows: List[Dict[str, Any]] = []
+
+    # Split event types for controlled assignment
+    non_activation_events = [e for e in EVENT_TYPES if e not in ACTIVATION_EVENTS]
+    activation_event_list = list(ACTIVATION_EVENTS)
 
     for signup in signups:
         user_id = signup["user_id"]
@@ -349,10 +357,16 @@ def generate_user_events(
                 day_offset = int(rng.integers(0, 7))
                 event_ts = signup_ts + timedelta(days=day_offset, hours=hour_offset)
 
-            # Pick event type
+            # Pick event type based on activation status and timing
             if is_activated and i == 0:
-                event_type = str(rng.choice(list(ACTIVATION_EVENTS)))
+                # First event for activated user = guaranteed activation event
+                event_type = str(rng.choice(activation_event_list))
+            elif not is_activated and day_offset <= 7:
+                # Non-activated user within 7-day window: ONLY non-activation events
+                event_type = str(rng.choice(non_activation_events))
             else:
+                # All other cases: any event type is fine
+                # (activated users' later events, or non-activated users after day 7)
                 event_type = str(rng.choice(EVENT_TYPES))
 
             rows.append({
