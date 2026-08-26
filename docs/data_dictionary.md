@@ -1,6 +1,6 @@
 # 📖 Data Dictionary
 
-> Auto-generated on 2026-08-25 14:05:27
+> Auto-generated on 2026-08-25 19:29:36
 
 This document describes all raw datasets consumed by the Downstream Activation Engine pipeline, including column definitions, data types, nullability, and sample values.
 
